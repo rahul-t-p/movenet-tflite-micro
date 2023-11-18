@@ -1,0 +1,81 @@
+diff --git a/tflite-micro/tensorflow/lite/micro/kernels/cast.cc b/tensorflow/lite/micro/kernels/cast.cc
+index 10d25eb4..87ee537e 100644
+--- a/tflite-micro/tensorflow/lite/micro/kernels/cast.cc
++++ b/tflite-micro/tensorflow/lite/micro/kernels/cast.cc
+@@ -88,6 +88,8 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   switch (input->type) {
+     case kTfLiteInt8:
+       return copyToTensor(context, input->data.int8, output, num_elements);
++    case kTfLiteUInt8:
++      return copyToTensor(context, input->data.int8, output, num_elements);
+     case kTfLiteInt16:
+       return copyToTensor(context, tflite::micro::GetTensorData<int16_t>(input),
+                           output, num_elements);
+diff --git a/tflite-micro/tensorflow/lite/micro/kernels/floor_div.cc b/tensorflow/lite/micro/kernels/floor_div.cc
+index 5c008085..0c3e2221 100644
+--- a/tflite-micro/tensorflow/lite/micro/kernels/floor_div.cc
++++ b/tflite-micro/tensorflow/lite/micro/kernels/floor_div.cc
+@@ -49,6 +49,13 @@ TfLiteStatus CalculateOpData(TfLiteContext* context, TfLiteNode* node) {
+ 
+   TF_LITE_ENSURE_TYPES_EQ(context, input1->type, input2->type);
+   TF_LITE_ENSURE_TYPES_EQ(context, input1->type, output->type);
++  if (output->type == kTfLiteInt32) {
++    // Only support int32 unquantized FLOOR_DIV for now.
++    TF_LITE_ENSURE_EQ(context, input1->quantization.type,
++                      kTfLiteNoQuantization);
++    TF_LITE_ENSURE_EQ(context, input2->quantization.type,
++                      kTfLiteNoQuantization);
++  }
+ 
+   micro_context->DeallocateTempTfLiteTensor(input1);
+   micro_context->DeallocateTempTfLiteTensor(input2);
+@@ -113,6 +120,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+     case kTfLiteFloat32: {
+       return EvalFloorDiv<float>(context, input1, input2, output);
+     }
++    case kTfLiteInt32: {
++      return EvalFloorDiv<int32_t>(context, input1, input2, output);
++    }
+     default: {
+       MicroPrintf("Type '%s' is not supported by FLOOR_DIV.",
+                   TfLiteTypeGetName(input1->type));
+diff --git a/tflite-micro/tensorflow/lite/micro/kernels/sub.cc b/tensorflow/lite/micro/kernels/sub.cc
+index 930bc0ba..59c1af8e 100644
+--- a/tflite-micro/tensorflow/lite/micro/kernels/sub.cc
++++ b/tflite-micro/tensorflow/lite/micro/kernels/sub.cc
+@@ -126,6 +126,26 @@ TfLiteStatus EvalSubQuantized(TfLiteContext* context, TfLiteNode* node,
+       }
+       break;
+     }
++    case kTfLiteInt32: {
++      if (need_broadcast) {
++        tflite::reference_ops::BroadcastQuantSubSlow(
++            op_params, tflite::micro::GetTensorShape(input1),
++            tflite::micro::GetTensorData<int32_t>(input1),
++            tflite::micro::GetTensorShape(input2),
++            tflite::micro::GetTensorData<int32_t>(input2),
++            tflite::micro::GetTensorShape(output),
++            tflite::micro::GetTensorData<int32_t>(output));
++      } else {
++        tflite::reference_ops::Sub(
++            op_params, tflite::micro::GetTensorShape(input1),
++            tflite::micro::GetTensorData<int32_t>(input1),
++            tflite::micro::GetTensorShape(input2),
++            tflite::micro::GetTensorData<int32_t>(input2),
++            tflite::micro::GetTensorShape(output),
++            tflite::micro::GetTensorData<int32_t>(output));
++      }
++      break;
++    }
+     default:
+       MicroPrintf("Quantized type %s not currently supported.",
+                   TfLiteTypeGetName(output->type));
+@@ -147,7 +167,7 @@ TfLiteStatus SubEval(TfLiteContext* context, TfLiteNode* node) {
+   TFLITE_DCHECK(node->user_data != nullptr);
+   const OpDataSub& data = *(static_cast<const OpDataSub*>(node->user_data));
+ 
+-  if (output->type == kTfLiteFloat32) {
++  if (output->type == kTfLiteFloat32 || output->type == kTfLiteInt32) {
+     EvalSub(context, node, params, &data, input1, input2, output);
+   } else if (output->type == kTfLiteInt8 || output->type == kTfLiteInt16) {
+     TF_LITE_ENSURE_OK(context, EvalSubQuantized(context, node, params, &data,
